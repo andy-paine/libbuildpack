@@ -35,6 +35,7 @@ type Finalizer struct {
 	V2AppDir        string
 	V3AppDir        string
 	V2DepsDir       string
+	V2CacheDir      string
 	V3LayersDir     string
 	V3BuildpacksDir string
 	DepsIndex       string
@@ -47,6 +48,7 @@ type Finalizer struct {
 	ProfileDir      string
 	Detector        Detector
 	Installer       Installer
+	Manifest        *libbuildpack.Manifest
 }
 
 func (f *Finalizer) Finalize() error {
@@ -93,6 +95,28 @@ export PACK_APP_DIR="$HOME"
 exec $DEPS_DIR/launcher/%s "$2"
 `,
 		os.Getenv("CF_STACK"), V3_LAUNCHER_DEP)
+
+	f.Manifest.StoreBuildpackMetadata(f.V2CacheDir)
+
+	contents, _ := ioutil.ReadFile(filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml"))
+	fmt.Println("METADATA!!!!!!!!!!!!!!!!!!!!!")
+	fmt.Println(string(contents))
+
+	contents, _ = ioutil.ReadFile(filepath.Join(f.PlanMetadata))
+	fmt.Println("PLAN METADATA!!!!!!!!!!!!!!!!!!!!!")
+	fmt.Println(string(contents))
+
+	contents, _ = ioutil.ReadFile(filepath.Join(f.GroupMetadata))
+	fmt.Println("GROUP METADATA!!!!!!!!!!!!!!!!!!!!!")
+	fmt.Println(string(contents))
+
+	cmd := exec.Command("find", f.V3BuildpacksDir)
+	output, _ := cmd.CombinedOutput()
+	fmt.Println("V3BUILDPACKS DIR")
+	fmt.Println(string(output))
+
+	envVar := os.Getenv("VCAP_APPLICATION")
+	fmt.Println("VCAP_APPLICATION============================================", envVar)
 
 	return ioutil.WriteFile(filepath.Join(f.ProfileDir, "0_shim.sh"), []byte(profileContents), 0666)
 }

@@ -1,6 +1,7 @@
 package shims
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,5 +48,11 @@ func (d DefaultDetector) RunLifecycleDetect() error {
 		"-plan", d.PlanMetadata,
 	)
 	cmd.Env = append(os.Environ(), "PACK_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
-	return cmd.Run()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr,"OUTPUT!!!!!!!!!!!!!!!!!")
+	fmt.Fprintln(os.Stderr,string(output))
+	return nil
 }
