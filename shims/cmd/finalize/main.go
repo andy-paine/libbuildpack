@@ -107,7 +107,8 @@ func finalize(logger *libbuildpack.Logger) error {
 		ProfileDir:      profileDir,
 		Detector:        detector,
 		Installer:       installer,
-		Manifest: manifest,
+		Manifest:        manifest,
+		Logger:          logger,
 	}
 
 	return finalizer.Finalize()

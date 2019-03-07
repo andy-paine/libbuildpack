@@ -69,8 +69,7 @@ func (s *Supplier) SetUpFirstV3Buildpack() error {
 
 	appCFPath := filepath.Join(s.V3AppDir, ".cloudfoundry")
 	if err := os.MkdirAll(appCFPath, 0777); err != nil {
-		fmt.Println("could not open the cloudfoundry dir")
-		return err
+		return errors.Wrap(err, "could not open the cloudfoundry dir")
 	}
 
 	if _, err := os.OpenFile(filepath.Join(appCFPath, libbuildpack.SENTINEL), os.O_RDONLY|os.O_CREATE, 0666); err != nil {

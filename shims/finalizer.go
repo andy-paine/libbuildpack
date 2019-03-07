@@ -2,15 +2,14 @@ package shims
 
 import (
 	"fmt"
+	"github.com/BurntSushi/toml"
+	"github.com/cloudfoundry/libbuildpack"
+	"github.com/pkg/errors"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
-
-	"github.com/BurntSushi/toml"
-	"github.com/cloudfoundry/libbuildpack"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -31,6 +30,12 @@ type Detector interface {
 	RunLifecycleDetect() error
 }
 
+type LayerMetadata struct {
+	Build  bool `toml:"build"`
+	Launch bool `toml:"launch"`
+	Cache  bool `toml:"cache"`
+}
+
 type Finalizer struct {
 	V2AppDir        string
 	V3AppDir        string
@@ -49,6 +54,7 @@ type Finalizer struct {
 	Detector        Detector
 	Installer       Installer
 	Manifest        *libbuildpack.Manifest
+	Logger          *libbuildpack.Logger
 }
 
 func (f *Finalizer) Finalize() error {
@@ -70,6 +76,10 @@ func (f *Finalizer) Finalize() error {
 
 	if err := f.Installer.InstallOnlyVersion(V3_BUILDER_DEP, f.V3LifecycleDir); err != nil {
 		return errors.Wrap(err, "failed to install "+V3_BUILDER_DEP)
+	}
+
+	if err := f.RestoreV3Cache(); err != nil {
+		return errors.Wrap(err, "failed to restore v3 cache")
 	}
 
 	if err := f.RunLifeycleBuild(); err != nil {
@@ -98,25 +108,9 @@ exec $DEPS_DIR/launcher/%s "$2"
 
 	f.Manifest.StoreBuildpackMetadata(f.V2CacheDir)
 
-	contents, _ := ioutil.ReadFile(filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml"))
-	fmt.Println("METADATA!!!!!!!!!!!!!!!!!!!!!")
+	contents, _ := ioutil.ReadFile(f.PlanMetadata)
+	fmt.Println("BUILD PLAN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 	fmt.Println(string(contents))
-
-	contents, _ = ioutil.ReadFile(filepath.Join(f.PlanMetadata))
-	fmt.Println("PLAN METADATA!!!!!!!!!!!!!!!!!!!!!")
-	fmt.Println(string(contents))
-
-	contents, _ = ioutil.ReadFile(filepath.Join(f.GroupMetadata))
-	fmt.Println("GROUP METADATA!!!!!!!!!!!!!!!!!!!!!")
-	fmt.Println(string(contents))
-
-	cmd := exec.Command("find", f.V3BuildpacksDir)
-	output, _ := cmd.CombinedOutput()
-	fmt.Println("V3BUILDPACKS DIR")
-	fmt.Println(string(output))
-
-	envVar := os.Getenv("VCAP_APPLICATION")
-	fmt.Println("VCAP_APPLICATION============================================", envVar)
 
 	return ioutil.WriteFile(filepath.Join(f.ProfileDir, "0_shim.sh"), []byte(profileContents), 0666)
 }
@@ -226,25 +220,84 @@ func (f *Finalizer) MoveV3Layers() error {
 	if err != nil {
 		return err
 	}
-
-	for _, bpLayer := range bpLayers {
-		if filepath.Base(bpLayer) == "config" {
-			if err := os.Rename(filepath.Join(f.V3LayersDir, "config"), filepath.Join(f.V2DepsDir, "config")); err != nil {
+	for _, bpLayerPath := range bpLayers {
+		base := filepath.Base(bpLayerPath)
+		if base == "config" {
+			if err := f.moveV3Config(); err != nil {
 				return err
 			}
-
-			if err := os.MkdirAll(filepath.Join(f.V2AppDir, ".cloudfoundry"), 0777); err != nil {
+		} else {
+			if err := f.moveV3Layer(bpLayerPath); err != nil {
 				return err
 			}
-
-			if err := libbuildpack.CopyFile(filepath.Join(f.V2DepsDir, "config", "metadata.toml"), filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml")); err != nil {
-				return err
-			}
-		} else if err := os.Rename(bpLayer, filepath.Join(f.V2DepsDir, filepath.Base(bpLayer))); err != nil {
-			return err
 		}
 	}
 
+	return nil
+}
+
+func (f *Finalizer) moveV3Config() error {
+	if err := os.Rename(filepath.Join(f.V3LayersDir, "config"), filepath.Join(f.V2DepsDir, "config")); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Join(f.V2AppDir, ".cloudfoundry"), 0777); err != nil {
+		return err
+	}
+
+	if err := libbuildpack.CopyFile(filepath.Join(f.V2DepsDir, "config", "metadata.toml"), filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (f *Finalizer) moveV3Layer(layersPath string) error {
+	layersName := filepath.Base(layersPath)
+	tomls, err := filepath.Glob(filepath.Join(layersPath, "*.toml"))
+	if err != nil {
+		return err
+	}
+
+	for _, toml := range tomls {
+		decodedToml, err := f.ReadLayerMetadata(toml)
+		if err != nil {
+			return err
+		}
+
+		if decodedToml.Cache {
+			layerPath := toml[:len(toml)-5]
+			layerName := filepath.Base(layerPath)
+			if err := f.cacheLayer(layerPath, layersName, layerName); err != nil {
+				return err
+			}
+		}
+
+	}
+
+	if err := os.Rename(layersPath, filepath.Join(f.V2DepsDir, layersName)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (f *Finalizer) cacheLayer(v3Path, layersName, layerName string) error {
+	cacheDir := filepath.Join(f.V2CacheDir, "cnb", layersName, layerName)
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+		return err
+	}
+
+	return libbuildpack.CopyDirectory(v3Path, cacheDir)
+}
+
+func (f *Finalizer) RestoreV3Cache() error {
+	//Copies cache over, and unused layers will get automatically cleaned up after successful build
+	cnbCache := filepath.Join(f.V2CacheDir, "cnb")
+	if exists, err := libbuildpack.FileExists(cnbCache); err != nil {
+		return err
+	} else if exists {
+		return libbuildpack.MoveDirectory(cnbCache, f.V3LayersDir)
+	}
 	return nil
 }
 
@@ -273,11 +326,16 @@ func (f *Finalizer) MoveV2Layers(src, dst string) error {
 }
 
 func (f *Finalizer) WriteLayerMetadata(path string) error {
-	contents := struct {
-		Build  bool `toml:"build"`
-		Launch bool `toml:"launch"`
-	}{true, true}
+	contents := LayerMetadata{true, true, false}
 	return encodeTOML(path+".toml", contents)
+}
+
+func (f *Finalizer) ReadLayerMetadata(path string) (LayerMetadata, error) {
+	contents := LayerMetadata{}
+	if _, err := toml.DecodeFile(path, &contents); err != nil {
+		return LayerMetadata{}, err
+	}
+	return contents, nil
 }
 
 func (f *Finalizer) RenameEnvDir(dst string) error {
