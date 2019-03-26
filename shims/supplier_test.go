@@ -104,7 +104,7 @@ var _ = Describe("Supplier", func() {
 			Expect(supplier.SetUpFirstV3Buildpack()).To(Succeed())
 			linkDst, err := os.Readlink(v2AppDir)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(linkDst).To(Equal(shims.ERROR_FILE))
+			Expect(linkDst).To(Equal(shims.ErrorFileContents))
 		})
 
 		It("Does nothing if V2AppDir has already been moved", func() {
@@ -121,10 +121,10 @@ var _ = Describe("Supplier", func() {
 		})
 	})
 
-	Context("SaveOrderToml", func() {
+	Context("SaveOrderTOML", func() {
 		It("copies the order metadata to be used for finalize", func() {
 			Expect(ioutil.WriteFile(filepath.Join(v2BuildpacksDir, depsIndex, "order.toml"), []byte(""), 0666)).To(Succeed())
-			orderFile, err := supplier.SaveOrderToml()
+			orderFile, err := supplier.SaveOrderTOML()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(orderFile).To(Equal(filepath.Join(orderDir, "order"+depsIndex+".toml")))
 			Expect(orderFile).To(BeAnExistingFile())

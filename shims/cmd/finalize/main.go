@@ -1,12 +1,14 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/cloudfoundry/libbuildpack"
 	"github.com/cloudfoundry/libbuildpack/shims"
@@ -111,5 +113,56 @@ func finalize(logger *libbuildpack.Logger) error {
 		Logger:          logger,
 	}
 
-	return finalizer.Finalize()
+	if err := os.RemoveAll(finalizer.V2AppDir); err != nil {
+		return errors.Wrap(err, "failed to remove error file")
+	}
+
+	if err := finalizer.MergeOrderTOMLs(); err != nil {
+		return errors.Wrap(err, "failed to merge order metadata")
+	}
+
+	if err := finalizer.RunV3Detect(); err != nil {
+		return errors.Wrap(err, "failed to run V3 detect")
+	}
+
+	if err := finalizer.IncludePreviousV2Buildpacks(); err != nil {
+		return errors.Wrap(err, "failed to include previous v2 buildpacks")
+	}
+
+	if err := finalizer.Installer.InstallOnlyVersion(shims.V3BuilderDep, finalizer.V3LifecycleDir); err != nil {
+		return errors.Wrap(err, "failed to install "+shims.V3BuilderDep)
+	}
+
+	if err := finalizer.RestoreV3Cache(); err != nil {
+		return errors.Wrap(err, "failed to restore v3 cache")
+	}
+
+	if err := finalizer.RunLifeycleBuild(); err != nil {
+		return errors.Wrap(err, "failed to run v3 lifecycle builder")
+	}
+
+	if err := finalizer.Installer.InstallOnlyVersion(shims.V3LauncherDep, finalizer.V3LauncherDir); err != nil {
+		return errors.Wrap(err, "failed to install "+shims.V3LauncherDep)
+	}
+
+	if err := os.Rename(finalizer.V3AppDir, finalizer.V2AppDir); err != nil {
+		return errors.Wrap(err, "failed to move app")
+	}
+
+	if err := finalizer.MoveV3Layers(); err != nil {
+		return errors.Wrap(err, "failed to move V3 dependencies")
+	}
+
+	profileContents := fmt.Sprintf(
+		`export PACK_STACK_ID="org.cloudfoundry.stacks.%s"
+export PACK_LAYERS_DIR="$DEPS_DIR"
+export PACK_APP_DIR="$HOME"
+exec $DEPS_DIR/launcher/%s "$2"
+`,
+		os.Getenv("CF_STACK"), shims.V3LauncherDep)
+
+	finalizer.Manifest.StoreBuildpackMetadata(finalizer.V2CacheDir)
+
+	return ioutil.WriteFile(filepath.Join(finalizer.ProfileDir, "0_shim.sh"), []byte(profileContents), 0666)
+
 }

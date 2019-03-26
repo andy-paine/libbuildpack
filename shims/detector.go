@@ -1,10 +1,11 @@
 package shims
 
 import (
-	"github.com/pkg/errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/pkg/errors"
 )
 
 type Installer interface {
@@ -35,12 +36,12 @@ func (d DefaultDetector) Detect() error {
 }
 
 func (d DefaultDetector) RunLifecycleDetect() error {
-	if err := d.Installer.InstallOnlyVersion(V3_DETECTOR_DEP, d.V3LifecycleDir); err != nil {
+	if err := d.Installer.InstallOnlyVersion(V3DetectorDep, d.V3LifecycleDir); err != nil {
 		return errors.Wrap(err, "failed to install v3 lifecycle detector")
 	}
 
 	cmd := exec.Command(
-		filepath.Join(d.V3LifecycleDir, V3_DETECTOR_DEP),
+		filepath.Join(d.V3LifecycleDir, V3DetectorDep),
 		"-app", d.AppDir,
 		"-buildpacks", d.V3BuildpacksDir,
 		"-order", d.OrderMetadata,

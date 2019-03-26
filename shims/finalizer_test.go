@@ -1,11 +1,11 @@
 package shims_test
 
 import (
-	"fmt"
-	"github.com/cloudfoundry/libbuildpack"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+
+	"github.com/cloudfoundry/libbuildpack"
 
 	"github.com/cloudfoundry/libbuildpack/shims"
 	"github.com/golang/mock/gomock"
@@ -34,7 +34,7 @@ var _ = Describe("Finalizer", func() {
 		groupMetadata,
 		profileDir,
 		binDir,
-		depsIndex    string
+		depsIndex string
 		finalizeLogger *libbuildpack.Logger
 	)
 
@@ -169,6 +169,13 @@ var _ = Describe("Finalizer", func() {
   [[groups.buildpacks]]
     id = "this.is.a.fake.bpD"
     version = "latest"`))
+		})
+		It("fails when a directory is in OrderDir", func() {
+			Expect(os.MkdirAll(filepath.Join(orderDir, "really_a_dir3.toml"), 0777)).To(Succeed())
+			err := finalizer.MergeOrderTOMLs()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("this should only contain .toml files"))
+
 		})
 	})
 
@@ -409,7 +416,6 @@ var _ = Describe("Finalizer", func() {
 		)
 
 		JustBeforeEach(func() {
-			fmt.Println("V3LayersDir from test finalizer: ", finalizer.V3LayersDir)
 			testLayers = filepath.Join(finalizer.V3LayersDir, "org.cloudfoundry.generic.buildpack")
 			Expect(os.MkdirAll(testLayers, os.ModePerm)).To(Succeed())
 			Dep1LayerMetadataPath = filepath.Join(testLayers, "dep1.toml")

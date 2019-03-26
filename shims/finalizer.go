@@ -2,20 +2,21 @@ package shims
 
 import (
 	"fmt"
-	"github.com/BurntSushi/toml"
-	"github.com/cloudfoundry/libbuildpack"
-	"github.com/pkg/errors"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"github.com/BurntSushi/toml"
+	"github.com/cloudfoundry/libbuildpack"
+	"github.com/pkg/errors"
 )
 
 const (
-	V3_DETECTOR_DEP = "v3-detector"
-	V3_BUILDER_DEP  = "v3-builder"
-	V3_LAUNCHER_DEP = "v3-launcher"
+	V3DetectorDep = "v3-detector"
+	V3BuilderDep  = "v3-builder"
+	V3LauncherDep = "v3-launcher"
 )
 
 var (
@@ -57,60 +58,6 @@ type Finalizer struct {
 	Logger          *libbuildpack.Logger
 }
 
-func (f *Finalizer) Finalize() error {
-	if err := os.RemoveAll(f.V2AppDir); err != nil {
-		return errors.Wrap(err, "failed to remove error file")
-	}
-
-	if err := f.MergeOrderTOMLs(); err != nil {
-		return errors.Wrap(err, "failed to merge order metadata")
-	}
-
-	if err := f.RunV3Detect(); err != nil {
-		return errors.Wrap(err, "failed to run V3 detect")
-	}
-
-	if err := f.IncludePreviousV2Buildpacks(); err != nil {
-		return errors.Wrap(err, "failed to include previous v2 buildpacks")
-	}
-
-	if err := f.Installer.InstallOnlyVersion(V3_BUILDER_DEP, f.V3LifecycleDir); err != nil {
-		return errors.Wrap(err, "failed to install "+V3_BUILDER_DEP)
-	}
-
-	if err := f.RestoreV3Cache(); err != nil {
-		return errors.Wrap(err, "failed to restore v3 cache")
-	}
-
-	if err := f.RunLifeycleBuild(); err != nil {
-		return errors.Wrap(err, "failed to run v3 lifecycle builder")
-	}
-
-	if err := f.Installer.InstallOnlyVersion(V3_LAUNCHER_DEP, f.V3LauncherDir); err != nil {
-		return errors.Wrap(err, "failed to install "+V3_LAUNCHER_DEP)
-	}
-
-	if err := os.Rename(f.V3AppDir, f.V2AppDir); err != nil {
-		return errors.Wrap(err, "failed to move app")
-	}
-
-	if err := f.MoveV3Layers(); err != nil {
-		return errors.Wrap(err, "failed to move V3 dependencies")
-	}
-
-	profileContents := fmt.Sprintf(
-		`export PACK_STACK_ID="org.cloudfoundry.stacks.%s"
-export PACK_LAYERS_DIR="$DEPS_DIR"
-export PACK_APP_DIR="$HOME"
-exec $DEPS_DIR/launcher/%s "$2"
-`,
-		os.Getenv("CF_STACK"), V3_LAUNCHER_DEP)
-
-	f.Manifest.StoreBuildpackMetadata(f.V2CacheDir)
-
-	return ioutil.WriteFile(filepath.Join(f.ProfileDir, "0_shim.sh"), []byte(profileContents), 0666)
-}
-
 func (f *Finalizer) MergeOrderTOMLs() error {
 	var tomls []order
 	orderFiles, err := ioutil.ReadDir(f.OrderDir)
@@ -119,6 +66,9 @@ func (f *Finalizer) MergeOrderTOMLs() error {
 	}
 
 	for _, file := range orderFiles {
+		if file.IsDir() {
+			return errors.New(fmt.Sprintf("Dir found in %s, this should only contain .toml files", f.OrderDir))
+		}
 		orderTOML, err := parseOrderTOML(filepath.Join(f.OrderDir, file.Name()))
 		if err != nil {
 			return err
@@ -151,14 +101,6 @@ func (f *Finalizer) MergeOrderTOMLs() error {
 	}
 
 	return encodeTOML(f.OrderMetadata, finalToml)
-}
-
-func parseOrderTOML(path string) (order, error) {
-	var order order
-	if _, err := toml.DecodeFile(path, &order); err != nil {
-		return order, err
-	}
-	return order, nil
 }
 
 func (f *Finalizer) RunV3Detect() error {
@@ -211,6 +153,46 @@ func (f *Finalizer) IncludePreviousV2Buildpacks() error {
 	return nil
 }
 
+func (f *Finalizer) MoveV2Layers(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0777); err != nil {
+		return err
+	}
+
+	return os.Rename(src, dst)
+}
+
+func (f *Finalizer) WriteLayerMetadata(path string) error {
+	contents := LayerMetadata{true, true, false}
+	return encodeTOML(path+".toml", contents)
+}
+
+func (f *Finalizer) RestoreV3Cache() error {
+	//Copies cache over, and unused layers will get automatically cleaned up after successful build
+	cnbCache := filepath.Join(f.V2CacheDir, "cnb")
+	if exists, err := libbuildpack.FileExists(cnbCache); err != nil {
+		return err
+	} else if exists {
+		return libbuildpack.MoveDirectory(cnbCache, f.V3LayersDir)
+	}
+	return nil
+}
+
+func (f *Finalizer) RunLifeycleBuild() error {
+	cmd := exec.Command(
+		filepath.Join(f.V3LifecycleDir, V3BuilderDep),
+		"-app", f.V3AppDir,
+		"-buildpacks", f.V3BuildpacksDir,
+		"-group", f.GroupMetadata,
+		"-layers", f.V3LayersDir,
+		"-plan", f.PlanMetadata,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "PACK_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
+
+	return cmd.Run()
+}
+
 func (f *Finalizer) MoveV3Layers() error {
 	bpLayers, err := filepath.Glob(filepath.Join(f.V3LayersDir, "*"))
 	if err != nil {
@@ -230,100 +212,6 @@ func (f *Finalizer) MoveV3Layers() error {
 	}
 
 	return nil
-}
-
-func (f *Finalizer) moveV3Config() error {
-	if err := os.Rename(filepath.Join(f.V3LayersDir, "config"), filepath.Join(f.V2DepsDir, "config")); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Join(f.V2AppDir, ".cloudfoundry"), 0777); err != nil {
-		return err
-	}
-
-	if err := libbuildpack.CopyFile(filepath.Join(f.V2DepsDir, "config", "metadata.toml"), filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml")); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (f *Finalizer) moveV3Layer(layersPath string) error {
-	layersName := filepath.Base(layersPath)
-	tomls, err := filepath.Glob(filepath.Join(layersPath, "*.toml"))
-	if err != nil {
-		return err
-	}
-
-	for _, toml := range tomls {
-		decodedToml, err := f.ReadLayerMetadata(toml)
-		if err != nil {
-			return err
-		}
-
-		if decodedToml.Cache {
-			layerPath := toml[:len(toml)-5]
-			layerName := filepath.Base(layerPath)
-			if err := f.cacheLayer(layerPath, layersName, layerName); err != nil {
-				return err
-			}
-		}
-
-	}
-
-	if err := os.Rename(layersPath, filepath.Join(f.V2DepsDir, layersName)); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (f *Finalizer) cacheLayer(v3Path, layersName, layerName string) error {
-	cacheDir := filepath.Join(f.V2CacheDir, "cnb", layersName, layerName)
-	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return err
-	}
-
-	return libbuildpack.CopyDirectory(v3Path, cacheDir)
-}
-
-func (f *Finalizer) RestoreV3Cache() error {
-	//Copies cache over, and unused layers will get automatically cleaned up after successful build
-	cnbCache := filepath.Join(f.V2CacheDir, "cnb")
-	if exists, err := libbuildpack.FileExists(cnbCache); err != nil {
-		return err
-	} else if exists {
-		return libbuildpack.MoveDirectory(cnbCache, f.V3LayersDir)
-	}
-	return nil
-}
-
-func (f *Finalizer) RunLifeycleBuild() error {
-	cmd := exec.Command(
-		filepath.Join(f.V3LifecycleDir, V3_BUILDER_DEP),
-		"-app", f.V3AppDir,
-		"-buildpacks", f.V3BuildpacksDir,
-		"-group", f.GroupMetadata,
-		"-layers", f.V3LayersDir,
-		"-plan", f.PlanMetadata,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "PACK_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
-
-	return cmd.Run()
-}
-
-func (f *Finalizer) MoveV2Layers(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0777); err != nil {
-		return err
-	}
-
-	return os.Rename(src, dst)
-}
-
-func (f *Finalizer) WriteLayerMetadata(path string) error {
-	contents := LayerMetadata{true, true, false}
-	return encodeTOML(path+".toml", contents)
 }
 
 func (f *Finalizer) ReadLayerMetadata(path string) (LayerMetadata, error) {
@@ -386,6 +274,68 @@ func (f *Finalizer) AddFakeCNBBuildpack(buildpackID string) error {
 	}
 
 	return ioutil.WriteFile(filepath.Join(buildpackPath, "bin", "build"), []byte(`#!/bin/bash`), 0777)
+}
+
+func (f *Finalizer) cacheLayer(v3Path, layersName, layerName string) error {
+	cacheDir := filepath.Join(f.V2CacheDir, "cnb", layersName, layerName)
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+		return err
+	}
+
+	return libbuildpack.CopyDirectory(v3Path, cacheDir)
+}
+
+func (f *Finalizer) moveV3Layer(layersPath string) error {
+	layersName := filepath.Base(layersPath)
+	tomls, err := filepath.Glob(filepath.Join(layersPath, "*.toml"))
+	if err != nil {
+		return err
+	}
+
+	for _, toml := range tomls {
+		decodedToml, err := f.ReadLayerMetadata(toml)
+		if err != nil {
+			return err
+		}
+
+		if decodedToml.Cache {
+			layerPath := toml[:len(toml)-5]
+			layerName := filepath.Base(layerPath)
+			if err := f.cacheLayer(layerPath, layersName, layerName); err != nil {
+				return err
+			}
+		}
+
+	}
+
+	if err := os.Rename(layersPath, filepath.Join(f.V2DepsDir, layersName)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (f *Finalizer) moveV3Config() error {
+	if err := os.Rename(filepath.Join(f.V3LayersDir, "config"), filepath.Join(f.V2DepsDir, "config")); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Join(f.V2AppDir, ".cloudfoundry"), 0777); err != nil {
+		return err
+	}
+
+	if err := libbuildpack.CopyFile(filepath.Join(f.V2DepsDir, "config", "metadata.toml"), filepath.Join(f.V2AppDir, ".cloudfoundry", "metadata.toml")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseOrderTOML(path string) (order, error) {
+	var order order
+	if _, err := toml.DecodeFile(path, &order); err != nil {
+		return order, err
+	}
+	return order, nil
 }
 
 func encodeTOML(dest string, data interface{}) error {

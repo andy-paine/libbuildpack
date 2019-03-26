@@ -4,6 +4,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/cloudfoundry/libbuildpack"
 	"github.com/cloudfoundry/libbuildpack/shims"
 )
@@ -76,5 +78,23 @@ func supply(logger *libbuildpack.Logger) error {
 		Logger:          logger,
 	}
 
-	return supplier.Supply()
+	if err := supplier.CheckBuildpackValid(); err != nil {
+		return errors.Wrap(err, "failed to check that buildpack is correct")
+	}
+
+	if err := supplier.SetUpFirstV3Buildpack(); err != nil {
+		return errors.Wrap(err, "failed to set up first shimmed buildpack")
+	}
+
+	if err := supplier.RemoveV2DepsIndex(); err != nil {
+		return errors.Wrap(err, "failed to remove v2 deps index dir")
+	}
+
+	orderFile, err := supplier.SaveOrderTOML()
+	if err != nil {
+		return errors.Wrap(err, "failed to save shimmed CNB order.toml")
+	}
+
+	return supplier.Installer.InstallCNBS(orderFile, supplier.V3BuildpacksDir)
+
 }

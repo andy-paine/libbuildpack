@@ -2,6 +2,7 @@ package shims
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,28 +27,25 @@ type Supplier struct {
 }
 
 const (
-	ERROR_FILE = "Error V2 buildpack After V3 buildpack"
+	ErrorFileContents = "Error V2 buildpack After V3 buildpack"
 )
 
-func (s *Supplier) Supply() error {
-	if err := s.CheckBuildpackValid(); err != nil {
-		return errors.Wrap(err, "failed to check that buildpack is correct")
-	}
-
-	if err := s.SetUpFirstV3Buildpack(); err != nil {
-		return errors.Wrap(err, "failed to set up first shimmed buildpack")
-	}
-
-	if err := s.RemoveV2DepsIndex(); err != nil {
-		return errors.Wrap(err, "failed to remove v2 deps index dir")
-	}
-
-	orderFile, err := s.SaveOrderToml()
+func (s *Supplier) CheckBuildpackValid() error {
+	version, err := s.Manifest.Version()
 	if err != nil {
-		return errors.Wrap(err, "failed to save shimmed CNB order.toml")
+		return errors.Wrap(err, "Could not determine buildpack version")
 	}
 
-	return s.Installer.InstallCNBS(orderFile, s.V3BuildpacksDir)
+	s.Logger.BeginStep("%s Buildpack version %s", strings.Title(s.Manifest.Language()), version)
+
+	err = s.Manifest.CheckStackSupport()
+	if err != nil {
+		return errors.Wrap(err, "stack not supported by buildpack")
+	}
+
+	s.Manifest.CheckBuildpackVersion(s.V2CacheDir)
+
+	return nil
 }
 
 func (s *Supplier) SetUpFirstV3Buildpack() error {
@@ -63,7 +61,7 @@ func (s *Supplier) SetUpFirstV3Buildpack() error {
 		return err
 	}
 
-	if err := os.Symlink(ERROR_FILE, s.V2AppDir); err != nil {
+	if err := os.Symlink(ErrorFileContents, s.V2AppDir); err != nil {
 		return err
 	}
 
@@ -72,7 +70,7 @@ func (s *Supplier) SetUpFirstV3Buildpack() error {
 		return errors.Wrap(err, "could not open the cloudfoundry dir")
 	}
 
-	if _, err := os.OpenFile(filepath.Join(appCFPath, libbuildpack.SENTINEL), os.O_RDONLY|os.O_CREATE, 0666); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(appCFPath, libbuildpack.SENTINEL), []byte{}, 0666); err != nil {
 		return err
 	}
 
@@ -83,30 +81,12 @@ func (s *Supplier) RemoveV2DepsIndex() error {
 	return os.RemoveAll(filepath.Join(s.V2DepsDir, s.DepsIndex))
 }
 
-func (s *Supplier) SaveOrderToml() (string, error) {
+func (s *Supplier) SaveOrderTOML() (string, error) {
 	orderFile := filepath.Join(s.OrderDir, fmt.Sprintf("order%s.toml", s.DepsIndex))
 	if err := libbuildpack.CopyFile(filepath.Join(s.V2BuildpackDir, "order.toml"), orderFile); err != nil {
 		return "", err
 	}
 	return orderFile, nil
-}
-
-func (s *Supplier) CheckBuildpackValid() error {
-	version, err := s.Manifest.Version()
-	if err != nil {
-		return errors.Wrap(err, "Could not determine buildpack version")
-	}
-
-	s.Logger.BeginStep("%s Buildpack version %s", strings.Title(s.Manifest.Language()), version)
-
-	err = s.Manifest.CheckStackSupport()
-	if err != nil {
-		return errors.Wrap(err, "Stack not supported by buildpack")
-	}
-
-	s.Manifest.CheckBuildpackVersion(s.V2CacheDir)
-
-	return nil
 }
 
 func moveContent(source, destination string) error {
