@@ -4,13 +4,11 @@ package packager
 
 import (
 	"archive/zip"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -106,32 +104,19 @@ func validateStack(stack, bpDir string) error {
 	return nil
 }
 
-func updateDependencyMap(dependencyMap interface{}, file File) error {
-	dep, ok := dependencyMap.(map[interface{}]interface{})
-	if !ok {
-		return fmt.Errorf("Could not cast deps[idx] to map[interface{}]interface{}")
+func calcSha(filepath string) (string, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return "", err
 	}
-	dep["file"] = file.Name
-	return nil
-}
+	defer f.Close()
 
-func downloadDependency(dependency Dependency, cacheDir string) (File, error) {
-	file := filepath.Join("dependencies", fmt.Sprintf("%x", md5.Sum([]byte(dependency.URI))), filepath.Base(dependency.URI))
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		log.Fatalf("error: %v", err)
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
 	}
 
-	if _, err := os.Stat(filepath.Join(cacheDir, file)); err != nil {
-		if err := downloadFromURI(dependency.URI, filepath.Join(cacheDir, file)); err != nil {
-			return File{}, err
-		}
-	}
-
-	if err := checkSha256(filepath.Join(cacheDir, file), dependency.SHA256); err != nil {
-		return File{}, err
-	}
-
-	return File{file, filepath.Join(cacheDir, file)}, nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func Package(bpDir, cacheDir, version, stack string, cached bool) (string, error) {
@@ -161,7 +146,8 @@ func Package(bpDir, cacheDir, version, stack string, cached bool) (string, error
 	if manifest.PrePackage != "" {
 		cmd := exec.Command(manifest.PrePackage)
 		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
 		if err != nil {
 			fmt.Fprintln(Stdout, string(out))
 			return "", err
@@ -169,6 +155,7 @@ func Package(bpDir, cacheDir, version, stack string, cached bool) (string, error
 	}
 
 	files := []File{}
+	file := File{}
 	for _, name := range manifest.IncludeFiles {
 		files = append(files, File{name, filepath.Join(dir, name)})
 	}
@@ -192,16 +179,21 @@ func Package(bpDir, cacheDir, version, stack string, cached bool) (string, error
 			if stack == "" || s == stack {
 				dependencyMap := deps[idx]
 				if cached {
-					if file, err := downloadDependency(d, cacheDir); err != nil {
+					if file, err = d.Download(cacheDir); err != nil {
 						return "", err
-					} else {
-						updateDependencyMap(dependencyMap, file)
-						files = append(files, file)
 					}
+
+					if err = d.UpdateDependencyMap(dependencyMap, file); err != nil {
+						return "", err
+					}
+
+					files = append(files, file)
 				}
+
 				if stack != "" {
 					delete(dependencyMap.(map[interface{}]interface{}), "cf_stacks")
 				}
+
 				dependenciesForStack = append(dependenciesForStack, dependencyMap)
 				break
 			}

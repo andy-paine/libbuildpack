@@ -1,0 +1,24 @@
+---
+language: nodejs
+include_files:
+  - manifest.yml
+dependencies:
+  - name: org.cloudfoundry.buildpacks.nodejs
+    version: 0.0.4
+    uri: file:///Users/pivotal/workspace/nodejs-cnb/nodejs-cnb.tgz
+    sha256: 6c5177ebc86a3a3e04fdaa58a4e076d836b203a94856b36146a039aebd713052
+    cf_stacks:
+      - cflinuxfs2
+      - cflinuxfs3
+    source: file:///tmp/archive/nodejs-cnb-source.tgz
+    source_sha256: 098f4d6ccd03c6e176545471df8de35de07d3e45a00218132b07b524e603359c
+    cnb: true
+  - name: v3-launcher
+    version: 0.0.2
+    uri: https://buildpacks.cloudfoundry.org/dependencies/v3-launcher/v3-launcher-00b2a143-53adf744.tgz
+    sha256: 53adf744891b06ca122a966e5f08f73826d5a9de7d97837e4460ad3a99aa7c77
+    cf_stacks:
+      - cflinuxfs2
+      - cflinuxfs3
+pre_package: scripts/build.sh
+default_versions: []

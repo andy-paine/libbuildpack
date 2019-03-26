@@ -40,7 +40,7 @@ var _ = Describe("Packager", func() {
 	Describe("Package", func() {
 		var zipFile string
 		var cached bool
-		AfterEach(func() { os.Remove(zipFile) })
+		//AfterEach(func() { os.Remove(zipFile) })
 
 		AssertStack := func() {
 			var manifest *packager.Manifest
@@ -229,6 +229,18 @@ var _ = Describe("Packager", func() {
 					Expect(ZipContents(zipFile, dest)).To(ContainSubstring("keaty"))
 				})
 			})
+
+			FContext("a dependancy is a CNB", func() {
+				BeforeEach(func() {
+					cached = true
+					buildpackDir = "./fixtures/good_v3shimmed"
+					version = "0.0.0"
+					stack = "cflinuxfs3"
+				})
+				It("gets the source, packages, and includes the packaged CNB as a file", func() {
+					Expect(zipFile).To(BeAnExistingFile())
+				})
+			})
 		})
 
 		Context("manifest.yml was already packaged", func() {
@@ -247,6 +259,7 @@ var _ = Describe("Packager", func() {
 				It("returns an error", func() {
 					zipFile, err = packager.Package("./fixtures/prepackaged", cacheDir, version, stack, cached)
 					Expect(err).To(MatchError("Cannot package from already packaged buildpack manifest"))
+
 				})
 			})
 		})
@@ -364,5 +377,7 @@ var _ = Describe("Packager", func() {
 				Expect(err.Error()).To(MatchRegexp("failed to open included_file: .*/DOESNOTEXIST.txt"))
 			})
 		})
+
 	})
+
 })
