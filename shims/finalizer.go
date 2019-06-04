@@ -57,6 +57,27 @@ type Finalizer struct {
 	Logger          *libbuildpack.Logger
 }
 
+type BuildpackTOML struct {
+	Buildpack interface{} `toml:"buildpack"`
+	Metadata  struct {
+		IncludeFiles    interface{}            `toml:"include_files"`
+		PrePackage      interface{}            `toml:"pre_package"`
+		DefaultVersions map[string]interface{} `toml:"default_versions"`
+		Dependencies    []V3Dependency         `toml:"dependencies"`
+	} `toml:"metadata"`
+	Stacks interface{} `toml:"stacks"`
+}
+type V3Dependency struct {
+	ID           string   `toml:"id"`
+	Name         string   `toml:"name"`
+	Sha256       string   `toml:"sha256"`
+	Stacks       []string `toml:"stacks"`
+	URI          string   `toml:"uri"`
+	Version      string   `toml:"version"`
+	Source       string   `toml:"source,omitempty"`
+	SourceSha256 string   `toml:"source_sha256,omitempty"`
+}
+
 func (f *Finalizer) Finalize() error {
 	if err := os.RemoveAll(f.V2AppDir); err != nil {
 		return errors.Wrap(err, "failed to remove error file")
@@ -64,6 +85,10 @@ func (f *Finalizer) Finalize() error {
 
 	if err := f.MergeOrderTOMLs(); err != nil {
 		return errors.Wrap(err, "failed to merge order metadata")
+	}
+
+	if err := f.ApplyOverrideYMLs(); err != nil {
+		return errors.Wrap(err, "unable to apply OverrideYML")
 	}
 
 	if err := f.RunV3Detect(); err != nil {
@@ -212,7 +237,7 @@ func (f *Finalizer) RunLifeycleBuild() error {
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "PACK_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
+	cmd.Env = append(os.Environ(), "CNB_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
 
 	return cmd.Run()
 }
@@ -304,6 +329,32 @@ exec $HOME/.cloudfoundry/%s "$2"
 	return ioutil.WriteFile(filepath.Join(f.ProfileDir, V3LaunchScript), []byte(profileContents), 0666)
 }
 
+func (f *Finalizer) ApplyOverrideYMLs() error {
+	overrideYMLPaths, err := filepath.Glob(filepath.Join(f.V2DepsDir, "*", "override.yml"))
+	if err != nil {
+		return err
+	}
+
+	bpTOMLs, err := filepath.Glob(filepath.Join(f.V3BuildpacksDir, "*", "*", "buildpack.toml"))
+	if err != nil {
+		return errors.Wrap(err, "unable to read cnb's in V3BuildpacksDir")
+	}
+
+	for _, overrideYML := range overrideYMLPaths {
+		var overrideManifest map[string]libbuildpack.Manifest
+		y := &libbuildpack.YAML{}
+		if err := y.Load(overrideYML, &overrideManifest); err != nil {
+			return errors.Wrap(err, "unable to unmarshal into overrideManifest")
+		}
+
+		if err := f.updateBuildpackTOML(bpTOMLs, overrideManifest); err != nil {
+			return err // TODO
+		}
+	}
+
+	return nil
+}
+
 func (f *Finalizer) moveV3Config() error {
 	if err := os.Rename(filepath.Join(f.V3LayersDir, "config"), filepath.Join(f.V2DepsDir, "config")); err != nil {
 		return err
@@ -364,4 +415,66 @@ func (f *Finalizer) cacheLayer(v3Path, layersName, layerName string) error {
 		return err
 	}
 	return libbuildpack.CopyDirectory(v3Path, cacheDir)
+}
+
+func (f *Finalizer) updateBuildpackTOML(bpTOMLPaths []string, overrideMap map[string]libbuildpack.Manifest) error {
+	for _, bpTOMLPath := range bpTOMLPaths {
+		var bpTOML BuildpackTOML
+		contents, err := ioutil.ReadFile(bpTOMLPath)
+		if err != nil {
+			return err
+		}
+
+		if err := toml.Unmarshal(contents, &bpTOML); err != nil {
+			return errors.Wrap(err, "failed to unmarshal into bpTOML")
+		}
+
+		for _, manifest := range overrideMap {
+			for _, defaultVer := range manifest.DefaultVersions {
+				if bpTOML.Metadata.DefaultVersions == nil {
+					bpTOML.Metadata.DefaultVersions = map[string]interface{}{}
+				}
+				bpTOML.Metadata.DefaultVersions[defaultVer.Name] = defaultVer.Version
+			}
+
+			for _, dep := range manifest.ManifestEntries {
+				overrideDep := v2ToV3Dep(dep)
+				replaced := false
+				cnbDeps := &bpTOML.Metadata.Dependencies
+				for idx, v3Dep := range *cnbDeps {
+					if v3Dep.ID == overrideDep.ID && v3Dep.Version == overrideDep.Version {
+						(*cnbDeps)[idx] = overrideDep
+						replaced = true
+					}
+				}
+				if !replaced {
+					*cnbDeps = append(*cnbDeps, overrideDep)
+				}
+			}
+		}
+
+		if err := encodeTOML(bpTOMLPath, bpTOML); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func v2ToV3Dep(entry libbuildpack.ManifestEntry) V3Dependency {
+	v3Stacks := make([]string, 0)
+	for _, stack := range entry.CFStacks {
+		v3Stacks = append(v3Stacks, fmt.Sprintf("org.cloudfoundry.stacks.%s", stack))
+	}
+
+	return V3Dependency{
+		ID:           entry.Dependency.Name,
+		Name:         entry.Dependency.Name,
+		Sha256:       entry.SHA256,
+		Stacks:       v3Stacks,
+		URI:          entry.URI,
+		Version:      entry.Dependency.Version,
+		Source:       "",
+		SourceSha256: "",
+	}
 }

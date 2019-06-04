@@ -1,0 +1,21 @@
+shimBP:
+  default_versions:
+    - name: dep1
+      version: 22.22.22
+    - name: dep2
+      version: 99.99.99
+  dependencies:
+    - name: dep1
+      version: 22.22.22
+      uri: override-uri1
+      file: override-file1
+      sha256: override-sha1
+      cf_stacks:
+        - override-stack1
+    - name: dep2
+      version: 99.99.99
+      uri: override-uri2
+      file: override-file2
+      sha256: override-sha2
+      cf_stacks:
+        - override-stack2

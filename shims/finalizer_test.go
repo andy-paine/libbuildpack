@@ -678,6 +678,54 @@ exec $HOME/.cloudfoundry/%s "$2"
 `, os.Getenv("CF_STACK"), shims.V3Launcher)))
 		})
 	})
+	Context("ApplyOverrideYMLs", func() {
+		FIt("applies overridden versions onto the dependencies of CNB buildpack.tomls", func() {
+			cnbPathA := filepath.Join(finalizer.V3BuildpacksDir, "cnbA")
+			cnbPathB := filepath.Join(finalizer.V3BuildpacksDir, "cnbB")
+			Expect(os.MkdirAll(cnbPathA, os.ModePerm)).To(Succeed())
+			Expect(os.MkdirAll(cnbPathB, os.ModePerm)).To(Succeed())
+			Expect(libbuildpack.CopyDirectory(filepath.Join("testdata", "cnbA"), cnbPathA)).To(Succeed())
+			Expect(libbuildpack.CopyDirectory(filepath.Join("testdata", "cnbB"), cnbPathB)).To(Succeed())
+
+			deps0 := filepath.Join(finalizer.V2DepsDir, "0")
+			deps1 := filepath.Join(finalizer.V2DepsDir, "1")
+
+			Expect(os.MkdirAll(deps0, os.ModePerm)).To(Succeed())
+			Expect(os.MkdirAll(deps1, os.ModePerm)).To(Succeed())
+
+			Expect(libbuildpack.CopyFile(filepath.Join("testdata", "overrideDep1AndDep2.yml"), filepath.Join(deps0, "override.yml"))).To(Succeed())
+			Expect(libbuildpack.CopyFile(filepath.Join("testdata", "overrideDep2AndDep3.yml"), filepath.Join(deps1, "override.yml"))).To(Succeed())
+
+			Expect(finalizer.ApplyOverrideYMLs()).To(Succeed())
+
+			// the last override.yml takes precedence (in this case overrideDep2AndDep3.yml")
+			cnbATomlBytes, err := ioutil.ReadFile(filepath.Join(cnbPathA, "buildpack.toml"))
+			Expect(err).ToNot(HaveOccurred())
+			cnbATomlContents := string(cnbATomlBytes)
+
+			Expect(cnbATomlContents).To(ContainSubstring(`id = "dep2"`))
+			Expect(cnbATomlContents).To(ContainSubstring(`version = "99.99.99"`))
+			Expect(cnbATomlContents).To(ContainSubstring("org.cloudfoundry.stacks.override-stack2.1"))
+			Expect(cnbATomlContents).To(ContainSubstring(`dep2 = "33.33.33"`))
+
+			Expect(cnbATomlContents).To(ContainSubstring(`id = "dep3"`))
+			Expect(cnbATomlContents).To(ContainSubstring(`version = "11.11.11"`))
+			Expect(cnbATomlContents).To(ContainSubstring("org.cloudfoundry.stacks.override-stack3"))
+
+			cnbBTomlBytes, err := ioutil.ReadFile(filepath.Join(cnbPathB, "buildpack.toml"))
+			Expect(err).ToNot(HaveOccurred())
+			cnbBTomlContents := string(cnbBTomlBytes)
+
+			Expect(cnbBTomlContents).To(ContainSubstring(`id = "dep2"`))
+			Expect(cnbBTomlContents).To(ContainSubstring(`version = "99.99.99"`))
+			Expect(cnbBTomlContents).To(ContainSubstring("org.cloudfoundry.stacks.override-stack2.1"))
+			Expect(cnbATomlContents).To(ContainSubstring(`dep1 = "22.22.22"`))
+
+			Expect(cnbBTomlContents).To(ContainSubstring(`id = "dep1"`))
+			Expect(cnbBTomlContents).To(ContainSubstring(`version = "22.22.22"`))
+			Expect(cnbBTomlContents).To(ContainSubstring("org.cloudfoundry.stacks.override-stack1"))
+		})
+	})
 })
 
 type bp struct {

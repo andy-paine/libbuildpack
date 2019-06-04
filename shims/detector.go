@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/cloudfoundry/libbuildpack"
+
 	"github.com/pkg/errors"
 )
 
@@ -26,6 +28,8 @@ type DefaultDetector struct {
 
 	Installer Installer
 }
+
+var logger = libbuildpack.NewLogger(os.Stderr)
 
 func (d DefaultDetector) Detect() error {
 	if err := d.Installer.InstallCNBS(d.OrderMetadata, d.V3BuildpacksDir); err != nil {
@@ -50,6 +54,6 @@ func (d DefaultDetector) RunLifecycleDetect() error {
 	)
 
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "PACK_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
+	cmd.Env = append(os.Environ(), "CNB_STACK_ID=org.cloudfoundry.stacks."+os.Getenv("CF_STACK"))
 	return cmd.Run()
 }
