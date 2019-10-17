@@ -40,7 +40,7 @@ func generateAssets(bpDir, languageName string, force bool) error {
 		Sha: shas,
 	})
 
-	if err := setupDep(bpDir, languageName); err != nil {
+	if err := setupGoMod(bpDir, languageName); err != nil {
 		return err
 	}
 
@@ -48,41 +48,22 @@ func generateAssets(bpDir, languageName string, force bool) error {
 
 }
 
-func setupDep(bpDir, languageName string) error {
-	fmt.Fprintln(Stdout, "Installing dep")
-	tmpDir, err := ioutil.TempDir("", "gopath")
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command("go", "get", "-u", "github.com/golang/dep/cmd/dep")
+func setupGoMod(bpDir, languageName string) error {
+	fmt.Fprintln(Stdout, "Running go install")
+
+	cmd := exec.Command("go", "install", fmt.Sprintf("./%s", filepath.Join("src", languageName, "supply")))
 	cmd.Stdout = Stdout
 	cmd.Stderr = Stderr
-	cmd.Env = append(os.Environ(), fmt.Sprintf("GOBIN=%s/.bin", bpDir), fmt.Sprintf("GOPATH=%s", tmpDir))
-	cmd.Dir = filepath.Join(bpDir, "src", languageName)
+	cmd.Env = append(
+		os.Environ(),
+		fmt.Sprintf("GOBIN=%s/.bin", bpDir),
+		"GO111MODULE=on",
+	)
+
+	cmd.Dir = bpDir
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("go get -u github.com/golang/dep/cmd/dep: %s", err)
-	}
-	if err := os.RemoveAll(tmpDir); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(Stdout, "Running dep ensure")
-
-	canonicalBpDir, err := filepath.EvalSymlinks(bpDir)
-	if err != nil {
-		return err
-	}
-
-	cmd = exec.Command(filepath.Join(bpDir, ".bin", "dep"), "ensure")
-	cmd.Stdout = Stdout
-	cmd.Stderr = Stderr
-	cmd.Env = append(os.Environ(), fmt.Sprintf("GOBIN=%s/.bin", bpDir), fmt.Sprintf("GOPATH=%s", canonicalBpDir))
-	cmd.Dir = filepath.Join(bpDir, "src", languageName)
-
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("GOPATH=%s\n", canonicalBpDir)
-		return fmt.Errorf("dep ensure: %s", err)
+		return fmt.Errorf("go %s: %s", cmd.Args, err)
 	}
 	return nil
 }

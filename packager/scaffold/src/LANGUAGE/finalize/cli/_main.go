@@ -1,8 +1,8 @@
 package main
 
 import (
-	"{{LANGUAGE}}/finalize"
-	_ "{{LANGUAGE}}/hooks"
+	"{{LANGUAGE}}-buildpack/src/{{LANGUAGE}}/finalize"
+	_ "{{LANGUAGE}}-buildpack/src/{{LANGUAGE}}/hooks"
 	"os"
 	"time"
 

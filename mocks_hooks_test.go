@@ -5,10 +5,10 @@
 package libbuildpack_test
 
 import (
-	reflect "reflect"
-
 	. "github.com/cloudfoundry/libbuildpack"
+	libbuildpack "github.com/cloudfoundry/libbuildpack"
 	gomock "github.com/golang/mock/gomock"
+	reflect "reflect"
 )
 
 // MockHook is a mock of Hook interface
@@ -35,7 +35,8 @@ func (m *MockHook) EXPECT() *MockHookMockRecorder {
 }
 
 // BeforeCompile mocks base method
-func (m *MockHook) BeforeCompile(arg0 *Stager) error {
+func (m *MockHook) BeforeCompile(arg0 *libbuildpack.Stager) error {
+	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BeforeCompile", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
@@ -43,11 +44,13 @@ func (m *MockHook) BeforeCompile(arg0 *Stager) error {
 
 // BeforeCompile indicates an expected call of BeforeCompile
 func (mr *MockHookMockRecorder) BeforeCompile(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BeforeCompile", reflect.TypeOf((*MockHook)(nil).BeforeCompile), arg0)
 }
 
 // AfterCompile mocks base method
-func (m *MockHook) AfterCompile(arg0 *Stager) error {
+func (m *MockHook) AfterCompile(arg0 *libbuildpack.Stager) error {
+	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AfterCompile", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
@@ -55,5 +58,6 @@ func (m *MockHook) AfterCompile(arg0 *Stager) error {
 
 // AfterCompile indicates an expected call of AfterCompile
 func (mr *MockHookMockRecorder) AfterCompile(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AfterCompile", reflect.TypeOf((*MockHook)(nil).AfterCompile), arg0)
 }

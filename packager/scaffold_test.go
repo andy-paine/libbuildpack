@@ -53,7 +53,7 @@ var _ = Describe("Scaffold", func() {
 
 			// top-level files
 			By("creates a .envrc file", checkfileexists("bpdir/.envrc"))
-			By("creates a .envrc file", checkfileexists("bpdir/.gitignore"))
+			By("creates a .gitignore file", checkfileexists("bpdir/.gitignore"))
 			By("creates a manifest.yml file", checkfileexists("bpdir/manifest.yml"))
 			By("creates a VERSION file", checkfileexists("bpdir/VERSION"))
 			By("creates a README file", checkfileexists("bpdir/README.md"))
@@ -73,7 +73,7 @@ var _ = Describe("Scaffold", func() {
 			By("creates a integration test script", checkfileexists("bpdir/scripts/integration.sh"))
 			By("creates a unit test script", checkfileexists("bpdir/scripts/unit.sh"))
 
-			By("creates a Gopkg.toml", checkfileexists("bpdir/src/mylanguage/Gopkg.toml"))
+			By("creates a go.mod", checkfileexists("bpdir/go.mod"))
 
 			// src/supply files
 			By("creates a supply src directory", checkfileexists("bpdir/src/mylanguage/supply"))
